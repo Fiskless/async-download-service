@@ -35,11 +35,11 @@ async def uptime_handler(request):
     photos_directory = app["settings"].photos_directory
     logging_enable = app["settings"].logging_enable
 
-    archive_name = request.match_info.get("archive_hash")
+    archive_name = request.match_info["archive_hash"]
     if not os.path.exists(f"{photos_directory}/{archive_name}"):
         raise web.HTTPNotFound(text="Архив не существует или был удален")
 
-    response.headers["Content-Disposition"] = f'attachment; filename="archive.zip'
+    response.headers["Content-Disposition"] = f'attachment; filename="archive.zip"'
 
     await response.prepare(request)
 
@@ -52,21 +52,25 @@ async def uptime_handler(request):
         cwd=f"{photos_directory}/{archive_name}",
     )
     try:
-        while True:
-            stdout = await archive.stdout.read(500 * 1024)
-            if not stdout:
-                break
+        stdout = await archive.stdout.read(500 * 1024)
+        while stdout:
             await asyncio.sleep(response_delay)
             if logging_enable:
                 logging.info("Sending archive chunk ...")
             await response.write(stdout)
+            stdout = await archive.stdout.read(500 * 1024)
     except asyncio.CancelledError:
         if logging_enable:
             logging.debug("Download was interrupted")
         raise
     finally:
-        archive.kill()
-        await archive.communicate()
+        if archive.returncode is None:
+            try:
+                archive.kill()
+                await archive.communicate()
+            except ProcessLookupError:  # Обработка кейса, когда RESPONSE_DELAY = 0
+                if logging_enable:
+                    logging.debug("Process already terminated")
     return response
 
 
